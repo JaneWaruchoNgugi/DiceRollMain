@@ -6,7 +6,7 @@ import {useGame} from "../Game/DiceGameContext.tsx";
 import {ROUND_SECONDS} from "../Game/gameTypes.ts";
 
 export const DiceChamber: FC = () => {
-    const {phase, countdown, diceFaces, revealedTotal, currentResult} = useGame();
+    const {phase, countdown, diceFaces, revealedTotal, currentResult, recentResults} = useGame();
 
     const diceGameActive = phase !== "betting";
     const diceIsSpinning = phase === "rolling";
@@ -41,6 +41,20 @@ export const DiceChamber: FC = () => {
                     <Dice3DScene faces={diceFaces} spinning={diceIsSpinning} active={diceGameActive}/>
                 </div>
                 <EffectsCanvas phase={phase} total={revealedTotal} won={currentResult?.won ?? null}/>
+
+                {recentResults.length > 0 && (
+                    <div className="id-history" aria-label="Previous results">
+                        <span className="id-history-label">Last</span>
+                        {recentResults.slice(0, 7).map((r, i) => (
+                            <div
+                                key={r.id}
+                                className={`id-history-pill id-hist-${r.outcome} ${i === 0 ? "is-latest" : ""}`}
+                            >
+                                {r.total}
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );

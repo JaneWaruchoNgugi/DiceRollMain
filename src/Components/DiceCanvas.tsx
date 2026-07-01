@@ -110,7 +110,10 @@ export const DiceCanvas: FC<DiceCanvasProps> = ({
             gradient2.addColorStop(0.5, "transparent");
             gradient2.addColorStop(1, "rgb(0,160,255,0.57)");
             ctx.fillStyle = gradient2;
-            ctx.fillRect(rectX, rectY, rectWidth / 2 + 200, rectHeight);
+            // Centre the shaft glow on cx (it used to start at rectX and run off
+            // to the right, pulling the whole chamber visually off-centre).
+            const shaftWidth = rectWidth / 2 + 200;
+            ctx.fillRect(cx - shaftWidth / 2, rectY, shaftWidth, rectHeight);
 
             ctx.drawImage(images.center2, centerImageX, centerImageY, centerImageWidth, centerImageHeight);
             ctx.drawImage(images.centerL, centerImageX, centerImageY, centerImageWidth, centerImageHeight);
