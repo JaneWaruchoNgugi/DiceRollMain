@@ -20,6 +20,26 @@ const COLORS = {
 
 const rgba = (c: readonly [number, number, number], a: number) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
+// Cache one soft radial glow sprite per colour (built once, reused every frame)
+// so particles blit with drawImage instead of a per-particle gradient.
+const spriteCache = new Map<string, HTMLCanvasElement>();
+function getSprite(color: readonly [number, number, number]): HTMLCanvasElement {
+    const key = color[0] + "," + color[1] + "," + color[2];
+    let c = spriteCache.get(key);
+    if (!c) {
+        c = document.createElement("canvas");
+        c.width = c.height = 64;
+        const g = c.getContext("2d")!;
+        const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0, rgba(color, 1));
+        grad.addColorStop(1, rgba(color, 0));
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 64, 64);
+        spriteCache.set(key, c);
+    }
+    return c;
+}
+
 interface Particle {
     x: number; y: number; vx: number; vy: number;
     life: number; max: number; size: number; color: readonly [number, number, number];
@@ -159,16 +179,15 @@ export const EffectsCanvas: FC<EffectsCanvasProps> = ({phase, total, won}) => {
                     else { list.splice(i, 1); }
                     continue;
                 }
+                // Draw a pre-rendered glow sprite instead of building a radial
+                // gradient per particle per frame (the old hot spot). ~5 sprites
+                // are cached for the whole app; only alpha/size change per frame.
                 const a = Math.max(0, Math.min(1, pt.life)) * (rolling ? 0.9 : 0.6);
-                const r = pt.size * (0.6 + pt.life * 0.6);
-                const g = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r * 3);
-                g.addColorStop(0, rgba(pt.color, a));
-                g.addColorStop(1, rgba(pt.color, 0));
-                ctx.fillStyle = g;
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, r * 3, 0, Math.PI * 2);
-                ctx.fill();
+                const d = pt.size * (0.6 + pt.life * 0.6) * 6;
+                ctx.globalAlpha = a;
+                ctx.drawImage(getSprite(pt.color), pt.x - d / 2, pt.y - d / 2, d, d);
             }
+            ctx.globalAlpha = 1;
 
             // Keep the field topped up while rolling for a denser storm.
             if (rolling && !reduce && list.length < AMBIENT + (mobile ? 10 : 26) && (t | 0) % 2 === 0) {

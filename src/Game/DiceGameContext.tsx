@@ -1,13 +1,12 @@
-import {createContext, FC, ReactNode, useContext, useEffect, useRef, useState} from "react";
+import {createContext, FC, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react";
 import {rollDice} from "../Utils/diceLogic.ts";
 import {useDiceAudioControl} from "../Hooks/useDiceSound.ts";
 import {usePersistentState} from "../Hooks/usePersistentState.ts";
 import {
-    BET_LEVELS,
-    BONUS_STARTING_BALANCE,
-    DEFAULT_LEVEL,
+    DICE_PAYOUT,
     GameStats,
     MIN_BET,
+    OVER_MIN,
     Range,
     ROLL_DURATION_MS,
     RoundPhase,
@@ -15,7 +14,8 @@ import {
     ROUND_SECONDS,
     STARTING_BALANCE,
     Tab,
-    Wallet,
+    UNDER_MAX,
+    WIN_CHANCE,
 } from "./gameTypes.ts";
 
 const ROLL_MS = ROLL_DURATION_MS;  // dice roll duration (shared with the canvas animation)
@@ -24,23 +24,16 @@ const RESULT_MS = 2500;            // result reveal before next round
 interface PendingBet {
     range: Range;
     stake: number;
-    levelIndex: number;
-    wallet: Wallet;
 }
 
 interface DiceGameValue {
-    balance: number;             // active wallet balance
-    cashBalance: number;
-    bonusBalance: number;
-    wallet: Wallet;
+    balance: number;
     betAmount: number;
     range: Range;
-    levelIndex: number;
-    mult: number;                // payout multiplier at the current level
-    winChance: number;           // 0..1 for the current level
+    mult: number;                // fixed payout multiplier
+    winChance: number;           // 0..1
     underThreshold: number;      // UNDER wins if total ≤ this
     overThreshold: number;       // OVER wins if total ≥ this
-    auto: boolean;
     phase: RoundPhase;
     countdown: number;
     diceFaces: number[];
@@ -56,10 +49,6 @@ interface DiceGameValue {
     toggleMute: () => void;
     setBetAmount: (n: number) => void;
     setRange: (r: Range) => void;
-    setWallet: (w: Wallet) => void;
-    incLevel: () => void;
-    decLevel: () => void;
-    toggleAuto: () => void;
     placeBet: () => void;
     setActiveTab: (t: Tab) => void;
 }
@@ -77,16 +66,12 @@ const EMPTY_STATS: GameStats = {totalBets: 0, totalWins: 0, biggestWin: 0};
 export const DiceGameProvider: FC<{ children: ReactNode }> = ({children}) => {
     const {muted, toggleMute, playDiceSound, startRoll, stopRoll, playBetPlaced, playTick, playChip} = useDiceAudioControl();
 
-    const [cashBalance, setCashBalance] = usePersistentState<number>("dice.balance.cash", STARTING_BALANCE);
-    const [bonusBalance, setBonusBalance] = usePersistentState<number>("dice.balance.bonus", BONUS_STARTING_BALANCE);
-    const [wallet, setWalletState] = usePersistentState<Wallet>("dice.wallet", "cash");
+    const [balance, setBalance] = usePersistentState<number>("dice.balance.cash", STARTING_BALANCE);
     const [stats, setStats] = usePersistentState<GameStats>("dice.stats", EMPTY_STATS);
     const [recentResults, setRecentResults] = usePersistentState<RoundResult[]>("dice.results", []);
 
     const [betAmount, setBetAmountState] = useState<number>(MIN_BET);
     const [range, setRange] = useState<Range>("under");
-    const [levelIndex, setLevelIndex] = useState<number>(DEFAULT_LEVEL);
-    const [auto, setAuto] = useState<boolean>(false);
     const [phase, setPhase] = useState<RoundPhase>("betting");
     const [countdown, setCountdown] = useState<number>(ROUND_SECONDS);
     const [pendingBet, setPendingBet] = useState<PendingBet | null>(null);
@@ -95,41 +80,29 @@ export const DiceGameProvider: FC<{ children: ReactNode }> = ({children}) => {
     const [currentResult, setCurrentResult] = useState<RoundResult | null>(null);
     const [activeTab, setActiveTab] = useState<Tab>("game");
 
-    const balance = wallet === "cash" ? cashBalance : bonusBalance;
-    const level = BET_LEVELS[levelIndex];
-
     // Refs mirror state the phase-effect needs without re-subscribing each render.
     const pendingBetRef = useRef<PendingBet | null>(null);
     pendingBetRef.current = pendingBet;
-    const autoRef = useRef(auto);
-    autoRef.current = auto;
     const roundRef = useRef<RoundResult | null>(null);
     const appliedRoundRef = useRef<number>(-1);
     // Seed past any results already persisted in localStorage to avoid key collisions.
     const idRef = useRef<number>(recentResults.reduce((m, r) => Math.max(m, r.id), 0) + 1);
 
-    const setBetAmount = (n: number) => {
+    const setBetAmount = useCallback((n: number) => {
         playChip();
         setBetAmountState(Math.max(MIN_BET, Math.floor(n) || MIN_BET));
-    };
-    const chooseRange = (r: Range) => { playChip(); setRange(r); };
-    const setWallet = (w: Wallet) => { playChip(); setWalletState(w); };
-    const incLevel = () => { playChip(); setLevelIndex(i => Math.min(BET_LEVELS.length - 1, i + 1)); };
-    const decLevel = () => { playChip(); setLevelIndex(i => Math.max(0, i - 1)); };
-    const toggleAuto = () => { playChip(); setAuto(a => !a); };
+    }, [playChip]);
 
-    const placeBet = () => {
+    const chooseRange = useCallback((r: Range) => { playChip(); setRange(r); }, [playChip]);
+
+    const placeBet = useCallback(() => {
         if (phase !== "betting" || pendingBet) return;
         const stake = Math.max(MIN_BET, betAmount);
         if (stake > balance) return;
-        if (wallet === "cash") setCashBalance(b => b - stake);
-        else setBonusBalance(b => b - stake);
-        setPendingBet({range, stake, levelIndex, wallet});
+        setBalance(b => b - stake);
+        setPendingBet({range, stake});
         playBetPlaced();
-    };
-    // Ref so the phase effect can auto-place without re-subscribing.
-    const placeBetRef = useRef(placeBet);
-    placeBetRef.current = placeBet;
+    }, [phase, pendingBet, betAmount, balance, range, setBalance, playBetPlaced]);
 
     // Round lifecycle state machine, driven purely by `phase`.
     useEffect(() => {
@@ -149,22 +122,17 @@ export const DiceGameProvider: FC<{ children: ReactNode }> = ({children}) => {
                 setCountdown(remaining);
                 if (remaining <= 3) playTick();  // tension ticks: 3, 2, 1
             }, 1000);
-            // Auto-rebet: drop the same bet automatically once betting opens.
-            const autoT = autoRef.current ? window.setTimeout(() => placeBetRef.current(), 500) : undefined;
-            return () => { clearInterval(interval); if (autoT) window.clearTimeout(autoT); };
+            return () => clearInterval(interval);
         }
 
         if (phase === "rolling") {
             const roll = rollDice();
             const bet = pendingBetRef.current;
             const betRange: Range | null = bet ? bet.range : null;
-            const outcome: Range = roll.total <= 10 ? "under" : "over";  // raw split, for trend
-            const lvl = bet ? BET_LEVELS[bet.levelIndex] : BET_LEVELS[DEFAULT_LEVEL];
-            const won = bet
-                ? (bet.range === "under" ? roll.total <= lvl.under : roll.total >= lvl.over)
-                : false;
+            const outcome: Range = roll.total <= UNDER_MAX ? "under" : "over";
+            const won = bet ? betRange === outcome : false;
             const stake = bet ? bet.stake : 0;
-            const winnings = won ? Math.round(stake * lvl.mult * 100) / 100 : 0;
+            const winnings = won ? Math.round(stake * DICE_PAYOUT * 100) / 100 : 0;
 
             roundRef.current = {
                 id: idRef.current++,
@@ -175,8 +143,6 @@ export const DiceGameProvider: FC<{ children: ReactNode }> = ({children}) => {
                 stake,
                 won,
                 winnings,
-                mult: lvl.mult,
-                wallet: bet ? bet.wallet : "cash",
             };
             setDiceFaces(roll.dices);
             setRevealedTotal(0);
@@ -203,8 +169,7 @@ export const DiceGameProvider: FC<{ children: ReactNode }> = ({children}) => {
                     biggestWin: Math.max(s.biggestWin, round.winnings),
                 }));
                 if (round.won) {
-                    if (round.wallet === "cash") setCashBalance(b => b + round.winnings);
-                    else setBonusBalance(b => b + round.winnings);
+                    setBalance(b => b + round.winnings);
                     playDiceSound("WinSnd");
                 } else {
                     playDiceSound("LoseSnd");
@@ -221,22 +186,17 @@ export const DiceGameProvider: FC<{ children: ReactNode }> = ({children}) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [phase]);
 
-    const potentialWin = Math.round(Math.max(MIN_BET, betAmount) * level.mult * 100) / 100;
+    const potentialWin = Math.round(Math.max(MIN_BET, betAmount) * DICE_PAYOUT * 100) / 100;
     const canBet = phase === "betting" && !pendingBet && betAmount <= balance;
 
-    const value: DiceGameValue = {
+    const value = useMemo<DiceGameValue>(() => ({
         balance,
-        cashBalance,
-        bonusBalance,
-        wallet,
         betAmount,
         range,
-        levelIndex,
-        mult: level.mult,
-        winChance: level.chance,
-        underThreshold: level.under,
-        overThreshold: level.over,
-        auto,
+        mult: DICE_PAYOUT,
+        winChance: WIN_CHANCE,
+        underThreshold: UNDER_MAX,
+        overThreshold: OVER_MIN,
         phase,
         countdown,
         diceFaces,
@@ -252,13 +212,13 @@ export const DiceGameProvider: FC<{ children: ReactNode }> = ({children}) => {
         toggleMute,
         setBetAmount,
         setRange: chooseRange,
-        setWallet,
-        incLevel,
-        decLevel,
-        toggleAuto,
         placeBet,
         setActiveTab,
-    };
+    }), [
+        balance, betAmount, range, phase, countdown, diceFaces, revealedTotal, pendingBet,
+        currentResult, recentResults, stats, activeTab, potentialWin, canBet, muted,
+        toggleMute, setBetAmount, chooseRange, placeBet,
+    ]);
 
     return <DiceGameContext.Provider value={value}>{children}</DiceGameContext.Provider>;
 };

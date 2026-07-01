@@ -10,6 +10,7 @@ export const GameHeader: FC = () => {
 
     return (
         <header className="id-header">
+            <div className="id-header-inner">
             <div className="id-logo">
                 <Dices className="id-logo-mark" size={24} strokeWidth={2.2} aria-hidden/>
                 <span className="id-logo-text">DICE<strong>ROLL</strong></span>
@@ -33,6 +34,7 @@ export const GameHeader: FC = () => {
                 >
                     {muted ? <VolumeX size={18} aria-hidden/> : <Volume2 size={18} aria-hidden/>}
                 </button>
+            </div>
             </div>
         </header>
     );

@@ -1,4 +1,5 @@
 import {FC} from "react";
+import {Dices, Trophy, X, TrendingUp, TrendingDown} from "lucide-react";
 import {DiceCanvas} from "./DiceCanvas.tsx";
 import {Dice3DScene} from "./Dice3DScene.tsx";
 import {EffectsCanvas} from "./EffectsCanvas.tsx";
@@ -18,15 +19,38 @@ export const DiceChamber: FC = () => {
     return (
         <div className="id-chamber">
             <div className="id-chamber-topstatus">
+                {phase === "betting" && (
+                    <span className="id-statusbar is-open">
+                        <span className="id-statusbar-dot"/>
+                        Place Your Bets
+                    </span>
+                )}
                 {phase === "rolling" && (
-                    <span className="id-status-title id-pulse">ROLLING…</span>
+                    <span className="id-statusbar is-rolling">
+                        <Dices size={15} className="id-statusbar-spin" aria-hidden/>
+                        Rolling
+                        <span className="id-statusbar-dots"><i/><i/><i/></span>
+                    </span>
                 )}
                 {phase === "result" && currentResult && (
-                    <span className={`id-status-title ${currentResult.won ? "id-win" : currentResult.betRange ? "id-lose" : ""}`}>
-                        {currentResult.betRange
-                            ? (currentResult.won ? `YOU WIN +${currentResult.winnings}` : "NO WIN")
-                            : `${currentResult.outcome.toUpperCase()} · ${currentResult.total}`}
-                    </span>
+                    currentResult.betRange ? (
+                        currentResult.won ? (
+                            <span className="id-statusbar is-win">
+                                <Trophy size={15} aria-hidden/> You Win <b>KSh {currentResult.winnings}</b>
+                            </span>
+                        ) : (
+                            <span className="id-statusbar is-lose">
+                                <X size={15} aria-hidden/> No Win
+                            </span>
+                        )
+                    ) : (
+                        <span className={`id-statusbar ${currentResult.outcome === "over" ? "is-over" : "is-under"}`}>
+                            {currentResult.outcome === "over"
+                                ? <TrendingUp size={15} aria-hidden/>
+                                : <TrendingDown size={15} aria-hidden/>}
+                            {currentResult.outcome.toUpperCase()}
+                        </span>
+                    )
                 )}
             </div>
 
